@@ -1,0 +1,2 @@
+import { build } from 'esbuild';
+await build({entryPoints: {api: 'apps/api/src/index.ts', worker: 'apps/worker/src/index.ts', migrate: 'packages/database/migrate.ts', 'storage-init': 'scripts/storage-init.ts', backup: 'scripts/backup.ts', 'protect-backups': 'scripts/protect-legacy-backups.ts'}, outdir: 'dist', outExtension: {'.js': '.mjs'}, bundle: true, platform: 'node', format: 'esm', packages: 'external', target: 'node22', sourcemap: true});

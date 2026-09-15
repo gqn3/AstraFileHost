@@ -1,0 +1,10 @@
+[Unit]
+Description=Renew AstraFile public IP certificate
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/astrafile/config/renew-ip-certificate.py
+TimeoutStartSec=15min
+UMask=0077

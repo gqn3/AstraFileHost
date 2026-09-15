@@ -1,0 +1,130 @@
+name: astrafile
+x-app: &app
+  image: astrafile-app:${ASTRAFILE_RELEASE:?Set an immutable release identifier}
+  build:
+    context: ../..
+    dockerfile: infra/Dockerfile
+  restart: unless-stopped
+  read_only: true
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  secrets: [astrafile-env]
+  volumes:
+    - /srv/astrafile/storage:/data-check:ro
+  depends_on:
+    astrafile-postgres: {condition: service_healthy}
+    astrafile-redis: {condition: service_started}
+    astrafile-storage: {condition: service_started}
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: "3"}
+services:
+  astrafile-api:
+    <<: *app
+    mem_limit: 512m
+    cpus: 1.5
+    environment: {NODE_ENV: production, HOST: 0.0.0.0, PORT: "4000"}
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:4000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 8s
+      retries: 5
+      start_period: 45s
+  astrafile-worker:
+    <<: *app
+    command: [node, dist/worker.mjs]
+    mem_limit: 512m
+    cpus: 1
+    stop_grace_period: 120s
+    healthcheck:
+      test: [CMD, node, -e, "process.exit(Date.now()-Number(require('fs').readFileSync('/tmp/astrafile-worker-heartbeat','utf8'))<45000?0:1)"]
+      interval: 20s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+    environment:
+      NODE_ENV: production
+      BACKUP_ENABLED: "true"
+      BACKUP_DIR: /backups
+    volumes:
+      - /srv/astrafile/storage:/data-check:ro
+      - /srv/astrafile/backups:/backups
+  astrafile-postgres:
+    image: astrafile-postgres:${ASTRAFILE_RELEASE:?Set an immutable release identifier}
+    build:
+      context: ../..
+      dockerfile: infra/Dockerfile.postgres
+    restart: unless-stopped
+    mem_limit: 768m
+    cpus: 1.5
+    environment:
+      POSTGRES_USER: astrafile
+      POSTGRES_DB: astrafile
+      POSTGRES_PASSWORD_FILE: /run/secrets/astrafile-db-password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    secrets: [astrafile-db-password]
+    volumes: [/srv/astrafile/postgres:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U astrafile -d astrafile]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+  astrafile-redis:
+    user: "10001:10001"
+    image: redis:7.4-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+    command: [redis-server, /run/secrets/astrafile-redis-conf]
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    secrets: [astrafile-redis-conf]
+    volumes: [/srv/astrafile/redis:/data]
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+  astrafile-storage:
+    image: astrafile-storage:${ASTRAFILE_RELEASE:?Set an immutable release identifier}
+    build:
+      context: ../..
+      dockerfile: infra/Dockerfile.storage
+    command: [server, -dir=/data, -s3, -metricsPort=9324, -s3.config=/run/secrets/astrafile-s3-config, -volume.max=0, -master.volumeSizeLimitMB=1024, -ip=astrafile-storage, -ip.bind=0.0.0.0, "-s3.allowedOrigins=${APP_ORIGIN:?Set APP_ORIGIN}"]
+    environment: {GOMEMLIMIT: 768MiB, GOGC: "50"}
+    restart: unless-stopped
+    mem_limit: 1536m
+    cpus: 2
+    stop_grace_period: 120s
+    secrets: [astrafile-s3-config]
+    volumes: [/srv/astrafile/storage:/data]
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+  astrafile-proxy:
+    image: astrafile-proxy:${ASTRAFILE_RELEASE:?Set an immutable release identifier}
+    build:
+      context: ../..
+      dockerfile: infra/Dockerfile.proxy
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 1
+    ports:
+      - "${ASTRAFILE_BIND_IP:-0.0.0.0}:${ASTRAFILE_HTTPS_PORT:-18443}:8443"
+      - "127.0.0.1:${ASTRAFILE_STORAGE_PORT:-18444}:8444"
+    volumes:
+      - /opt/astrafile/config/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /opt/astrafile/tls:/etc/astrafile:ro
+      - /srv/astrafile/proxy-logs:/var/log/astrafile
+    depends_on: [astrafile-api, astrafile-storage]
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+networks:
+  default:
+    name: astrafile-private
+secrets:
+  astrafile-env: {file: /opt/astrafile/secrets/app.env}
+  astrafile-db-password: {file: /opt/astrafile/secrets/db-password}
+  astrafile-redis-conf: {file: /opt/astrafile/secrets/redis.conf}
+  astrafile-s3-config: {file: /opt/astrafile/secrets/s3.json}

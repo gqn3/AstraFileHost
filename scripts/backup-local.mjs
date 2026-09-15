@@ -1,0 +1,15 @@
+import 'dotenv/config';
+import {encryptedBackupStream} from '../packages/privacy/backup.ts';
+import {spawn} from 'node:child_process';
+import {createWriteStream} from 'node:fs';
+import {mkdir,stat,writeFile} from 'node:fs/promises';
+import {pipeline} from 'node:stream/promises';
+import path from 'node:path';
+const container='astrafile-local-astrafile-postgres-1';
+const directory=path.resolve('.local/backups');await mkdir(directory,{recursive:true});
+const target=path.join(directory,`astrafile-${new Date().toISOString().replace(/[:.]/g,'-')}.dump.enc`);
+const dump=spawn('docker',['exec',container,'pg_dump','-U','astrafile','-d','astrafile','-Fc','--no-owner','--no-acl'],{stdio:['ignore','pipe','pipe'],windowsHide:true});
+let safeError=false;dump.stderr.on('data',()=>safeError=true);
+const exited=new Promise((resolve,reject)=>{dump.on('error',reject);dump.on('close',resolve);});await pipeline(encryptedBackupStream(dump.stdout),createWriteStream(target,{flags:'wx',mode:0o600}));if(await exited!==0)throw Error('Backup command failed');if((await stat(target)).size<100)throw Error('Empty backup');
+console.info('Metadata backup created in the project-local backup directory. Run scripts/restore-check.mjs to verify restoration.');
+await mkdir('output/verification',{recursive:true});await writeFile('output/verification/backup.json',JSON.stringify({file:target,bytes:(await stat(target)).size,created:new Date().toISOString(),restoreVerified:false},null,2));

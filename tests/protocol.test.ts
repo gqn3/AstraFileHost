@@ -1,0 +1,10 @@
+import {describe,it,expect} from 'vitest';
+import {partSize,expectedPartBytes,assertParts,contentDisposition,nameSchema,uploadSchema} from '../packages/validation/index.js';
+const MiB=1024**2,GiB=1024**3;
+describe('multipart protocol boundaries',()=>{
+ it('plans 17, 30, 50 and 100 GiB without truncation or >10,000 parts',()=>{for(const size of [17,30,50,100,5120].map(n=>n*GiB)){const chunk=partSize(size,64);expect(Math.ceil(size/chunk)).toBeLessThanOrEqual(10000);const parts=Array.from({length:Math.ceil(size/chunk)},(_,i)=>({number:i+1,size:expectedPartBytes(size,chunk,i+1),etag:'verified'}));expect(parts.reduce((a,p)=>a+p.size,0)).toBe(size);expect(()=>assertParts(size,chunk,parts)).not.toThrow();}});
+ it('rejects missing, duplicated, reordered and oversized parts',()=>{const parts=[{number:1,size:64*MiB,etag:'a'},{number:2,size:17,etag:'b'}];const size=64*MiB+17;expect(()=>assertParts(size,64*MiB,parts.slice(0,1))).toThrow();expect(()=>assertParts(size,64*MiB,[parts[0],parts[0]])).toThrow();expect(()=>assertParts(size,64*MiB,[parts[1],parts[0]])).toThrow();expect(()=>assertParts(size,64*MiB,[parts[0],{...parts[1],size:18}])).toThrow();expect(()=>expectedPartBytes(size,64*MiB,0)).toThrow();expect(()=>expectedPartBytes(size,64*MiB,3)).toThrow();});
+ it('preserves Arabic filenames while preventing header injection',()=>{const name='مشروع جديد.zip';const header=contentDisposition(name);expect(header).toContain(encodeURIComponent(name));expect(header).toContain("filename*=UTF-8''");expect(contentDisposition('x\r\nInjected: bad')).not.toMatch(/[\r\n]/);});
+ it('rejects traversal and control characters but accepts Unicode',()=>{for(const name of ['../x','x/y','x\\y','..','x\0y','x\r\ny'])expect(nameSchema.safeParse(name).success).toBe(false);expect(nameSchema.parse('مستند – final.zip')).toBe('مستند – final.zip');});
+ it('rejects malformed MIME and unsafe numeric sizes',()=>{expect(uploadSchema.safeParse({name:'x',size:NaN,fingerprint:'0'.repeat(64)}).success).toBe(false);expect(uploadSchema.safeParse({name:'x',size:1,mime:'text/html\r\nX: y',fingerprint:'0'.repeat(64)}).success).toBe(false);});
+});

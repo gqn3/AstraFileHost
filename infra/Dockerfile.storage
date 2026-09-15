@@ -1,0 +1,15 @@
+# syntax=docker/dockerfile:1
+FROM golang:1.26.8-alpine@sha256:ce864e7223ac17b1775e6fd0b4c0db580c2eb50e7953a427916379e4b92a1628 AS builder
+# Rebuild the existing 4.45 release with only its two vulnerable Go modules updated.
+# The archive checksum fixes the complete upstream source tree.
+ADD --checksum=sha256:d577baa0509178554b35350be261e8a6bebf440c51f0cfb1532a075cf843f1dd https://codeload.github.com/seaweedfs/seaweedfs/tar.gz/79b87202136cebdaaa7db4d94eaa5915ad381276 /tmp/source.tar.gz
+RUN mkdir /src && tar -xzf /tmp/source.tar.gz --strip-components=1 -C /src
+WORKDIR /src
+ENV CGO_ENABLED=0 GOMEMLIMIT=2GiB GOMAXPROCS=4
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod edit -dropreplace=github.com/apache/thrift \
+    && go get github.com/apache/thrift@v0.24.0 golang.org/x/image@v0.45.0
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go build -p 4 -trimpath -ldflags "-s -w -X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=79b8720-astrafile" -o /out/weed ./weed
+FROM chrislusf/seaweedfs:4.45@sha256:fc9f76fa993ad69966ffeb2f65d0318fcae39c6f8e20cf68ef7b3a5cb97769e5
+COPY --from=builder /out/weed /usr/bin/weed

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+<defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#0b1719"/><stop offset="1" stop-color="#183d39"/></linearGradient></defs>
+<rect width="1280" height="640" fill="url(#bg)"/><circle cx="1090" cy="90" r="280" fill="#70ddbf" opacity=".06"/>
+<path d="M96 155l36-72 36 72h-22l-14-30-14 30z" fill="#a5e1c9"/>
+<text x="96" y="292" fill="#f2f8f5" font-size="84" font-weight="700" font-family="Inter,Arial,sans-serif">AstraFileHost</text>
+<text x="100" y="370" fill="#a5e1c9" font-size="38" font-family="Inter,Arial,sans-serif">Your files. Your cloud. Your control.</text>
+<path d="M100 420h1080" stroke="#a5e1c9" opacity=".2"/>
+<text x="100" y="485" fill="#c2d5ce" font-size="25" font-family="Inter,Arial,sans-serif">Self-hosted file sharing and personal cloud</text>
+<text x="100" y="535" fill="#8fab9e" font-size="22" font-family="Inter,Arial,sans-serif">Resumable transfers · Private S3 storage · English / Arabic</text>
+</svg>

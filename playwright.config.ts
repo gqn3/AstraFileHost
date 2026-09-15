@@ -1,0 +1,2 @@
+import {defineConfig} from '@playwright/test';
+export default defineConfig({testDir:'tests/e2e',fullyParallel:false,workers:1,timeout:300000,expect:{timeout:20000},use:{baseURL:process.env.TEST_ORIGIN??'http://localhost:18400',ignoreHTTPSErrors:process.env.TEST_SELF_SIGNED==='true'&&new URL(process.env.TEST_ORIGIN??'http://localhost:18400').hostname==='localhost',headless:true,trace:'off',screenshot:'only-on-failure',viewport:{width:1440,height:1000}},reporter:[['list'],['html',{open:'never'}]],outputDir:'test-results'});

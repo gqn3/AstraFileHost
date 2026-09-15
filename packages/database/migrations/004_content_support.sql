@@ -1,0 +1,10 @@
+CREATE TABLE cms_pages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),slug text NOT NULL UNIQUE,kind text NOT NULL DEFAULT 'page',draft jsonb NOT NULL,published jsonb,published_at timestamptz,revision integer NOT NULL DEFAULT 1,updated_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE cms_revisions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),page_id uuid NOT NULL REFERENCES cms_pages(id),revision integer NOT NULL,snapshot jsonb NOT NULL,actor_id uuid REFERENCES users(id),created_at timestamptz NOT NULL DEFAULT now(),UNIQUE(page_id,revision));
+CREATE TABLE seo_settings(id integer PRIMARY KEY CHECK(id=1),value jsonb NOT NULL DEFAULT '{}',revision integer NOT NULL DEFAULT 1,updated_at timestamptz NOT NULL DEFAULT now());
+INSERT INTO seo_settings(id) VALUES(1);
+CREATE TABLE support_tickets(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),owner_id uuid REFERENCES users(id),capability_digest text UNIQUE,category text NOT NULL,subject_ciphertext text NOT NULL,status text NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN','IN_PROGRESS','CLOSED')),assignee_id uuid REFERENCES users(id),created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),closed_at timestamptz,CHECK((owner_id IS NULL)<>(capability_digest IS NULL)));
+CREATE INDEX support_tickets_owner ON support_tickets(owner_id,updated_at DESC);
+CREATE INDEX support_tickets_status ON support_tickets(status,updated_at DESC);
+CREATE TABLE support_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),ticket_id uuid NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,actor_id uuid REFERENCES users(id),staff boolean NOT NULL DEFAULT false,internal boolean NOT NULL DEFAULT false,body_ciphertext text NOT NULL,created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX support_messages_ticket ON support_messages(ticket_id,created_at);
+CREATE TABLE support_access(token_hash text PRIMARY KEY,ticket_id uuid NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,expires_at timestamptz NOT NULL);

@@ -1,0 +1,58 @@
+name: astrafile-acceptance
+services:
+  astrafile-api:
+    image: astrafile-app:acceptance
+    command: [node, dist/api.mjs]
+    restart: unless-stopped
+    env_file: ../../.secrets/acceptance.env
+    read_only: true
+    tmpfs: [/tmp:size=64m]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    volumes: [astrafile-storage:/data-check:ro]
+    networks:
+      default:
+        aliases: [astrafile-acceptance-api]
+  astrafile-worker:
+    image: astrafile-app:acceptance
+    command: [node, dist/worker.mjs]
+    env_file: ../../.secrets/acceptance.env
+    read_only: true
+    tmpfs: [/tmp:size=64m]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    restart: unless-stopped
+    environment: {BACKUP_ENABLED: "true", BACKUP_DIR: /backups}
+    volumes:
+      - astrafile-storage:/data-check:ro
+      - ../../.local/backups:/backups
+    healthcheck:
+      test: [CMD, node, -e, "process.exit(Date.now()-Number(require('fs').readFileSync('/tmp/astrafile-worker-heartbeat','utf8'))<45000?0:1)"]
+      interval: 20s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+  astrafile-proxy:
+    image: astrafile-proxy:stable-hardened
+    build:
+      context: ../..
+      dockerfile: infra/Dockerfile.proxy
+    restart: unless-stopped
+    ports: ["127.0.0.1:18543:8443", "127.0.0.1:18544:8444"]
+    volumes:
+      - ../../.local/acceptance-nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../../.secrets/acceptance-tls.crt:/etc/astrafile/tls.crt:ro
+      - ../../.secrets/acceptance-tls.key:/etc/astrafile/tls.key:ro
+      - ../../.local/proxy-logs:/var/log/astrafile
+    depends_on: [astrafile-api]
+    mem_limit: 128m
+networks:
+  default:
+    external: true
+    name: astrafile-local-private
+volumes:
+  astrafile-storage:
+    external: true
+    name: astrafile-local_astrafile-storage

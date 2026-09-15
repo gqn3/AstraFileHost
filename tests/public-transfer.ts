@@ -1,0 +1,32 @@
+import {chromium,expect} from '@playwright/test';
+import {readFile,mkdir,open,unlink} from 'node:fs/promises';
+import {randomBytes,createHash} from 'node:crypto';
+import {spawnSync} from 'node:child_process';
+import {report} from './helpers.js';
+const origin=process.env.TEST_ORIGIN!;
+if(!origin?.startsWith('https://')||new URL(origin).hostname==='localhost')throw Error('A public HTTPS origin is required');
+const size=Number(process.env.TEST_BYTES??1024**3),name=`astrafile-public-${Date.now()}.bin`,fixture=`.local/fixtures/${name}`;
+await mkdir('.local/fixtures',{recursive:true});const file=await open(fixture,'wx'),before=createHash('sha256');
+for(let offset=0;offset<size;){const chunk=randomBytes(Math.min(8*1024**2,size-offset));before.update(chunk);await file.write(chunk);offset+=chunk.length;}await file.close();const originalSHA256=before.digest('hex');
+const credentials=JSON.parse(await readFile(process.env.TEST_OWNER_FILE??'.secrets/production-owner-account.json','utf8'));
+const browser=await chromium.launch({headless:true});const context=await browser.newContext({acceptDownloads:true});const page=await context.newPage();
+let id='',fileId='',injected=0,blocked=true,unsafeEndpoint=false;const sentParts:number[]=[];let peakApiBytes=0;
+const samples:Promise<void>[]=[];let sampling=false;
+const sample=()=>{if(sampling||!process.env.ASTRAFILE_TEST_SSH_HOST||!process.env.ASTRAFILE_TEST_SSH_KEY)return;sampling=true;const result=spawnSync('ssh',['-i',process.env.ASTRAFILE_TEST_SSH_KEY!,'-o','IdentitiesOnly=yes','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes',process.env.ASTRAFILE_TEST_SSH_HOST!,'docker stats --no-stream --format "{{.MemUsage}}" astrafile-astrafile-api-1'],{encoding:'utf8',windowsHide:true,timeout:10000});const match=/([\d.]+)([KMG]iB)/.exec(result.stdout??'');if(match)peakApiBytes=Math.max(peakApiBytes,Number(match[1])*1024**({KiB:1,MiB:2,GiB:3}[match[2]]??0));sampling=false;};
+const timer=setInterval(sample,15000);
+try{
+ page.on('response',res=>{if(res.url()===origin+'/api/uploads'&&res.request().method()==='POST'&&res.status()===200)samples.push(res.json().then(data=>{id=data.id;fileId=data.fileId;}));});
+ await page.route('**/astrafile/**',async route=>{const url=new URL(route.request().url());if(url.origin!==origin)unsafeEndpoint=true;if(route.request().method()==='PUT'){const number=Number(url.searchParams.get('partNumber'));sentParts.push(number);if(number===2&&blocked&&injected===0){injected++;await new Promise(r=>setTimeout(r,500));await route.abort('connectionreset');return;}}await route.continue();});
+ await page.goto(origin+'/login');await page.getByLabel('Email address').fill(credentials.email);await page.getByLabel('Password',{exact:true}).fill(credentials.password);await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.waitForURL('**/drive');
+ await page.goto(origin);const start=performance.now();await page.locator('input[aria-label="Choose files"]').setInputFiles(fixture);
+ await expect.poll(()=>id,{timeout:60000}).not.toBe('');
+ await expect.poll(async()=>{const r=await context.request.get(`${origin}/api/uploads/${id}`);return (await r.json()).parts?.some((p:any)=>p.number===1)??false;},{timeout:600000,intervals:[1500]}).toBe(true);
+ await page.getByRole('button',{name:'Pause',exact:true}).click();await page.reload();await expect(page.locator('.transfer-card.paused')).toBeVisible();
+ const checkpoint=await(await context.request.get(`${origin}/api/uploads/${id}`)).json();const confirmed=new Set<number>(checkpoint.parts.map((p:any)=>p.number));const resumedAt=sentParts.length;
+ blocked=false;await page.locator('.transfer-card input[type="file"]').setInputFiles(fixture);await page.getByText('Ready to share',{exact:true}).waitFor({timeout:1800000});
+ const uploadSeconds=(performance.now()-start)/1000;expect(sentParts.slice(resumedAt).some(n=>confirmed.has(n))).toBe(false);expect(unsafeEndpoint).toBe(false);
+ const grantResponse=await context.request.post(`${origin}/api/files/${fileId}/download`,{headers:{origin,'x-astra-client':'web'},data:{}});expect(grantResponse.status()).toBe(200);const grant=await grantResponse.json();expect(new URL(grant.url).origin).toBe(origin);
+ const downStart=performance.now(),response=await fetch(grant.url);expect(response.status).toBe(200);const after=createHash('sha256');let bytes=0;for await(const chunk of response.body!){bytes+=chunk.length;after.update(chunk);}const downloadSeconds=(performance.now()-downStart)/1000;
+ expect(bytes).toBe(size);expect(after.digest('hex')).toBe(originalSHA256);const ranged=await fetch(grant.url,{headers:{range:'bytes=1000-1999'}});expect(ranged.status).toBe(206);expect(ranged.headers.get('content-range')).toBe(`bytes 1000-1999/${size}`);const local=await open(fixture,'r'),sampleBytes=Buffer.alloc(1000);await local.read(sampleBytes,0,1000,1000);await local.close();expect(Buffer.from(await ranged.arrayBuffer())).toEqual(sampleBytes);
+ sample();await report(`public-transfer-${size}`,{at:new Date().toISOString(),origin,bytes:size,certificateVerification:true,uploadSeconds,uploadMBps:size/uploadSeconds/1e6,downloadSeconds,downloadMBps:size/downloadSeconds/1e6,originalSHA256,integrity:true,range206:true,injectedConnectionResets:injected,refreshResume:true,confirmedPartsReused:confirmed.size,unsafeEndpoint,apiPeakMeasured:peakApiBytes>0,peakApiBytes});console.info('PASS public browser transfer, injected interruption, refresh/resume, SHA256 and Range/206');
+}finally{clearInterval(timer);await browser.close();await unlink(fixture);}

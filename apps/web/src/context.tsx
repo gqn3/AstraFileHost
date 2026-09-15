@@ -1,0 +1,7 @@
+import {createContext,useContext,useEffect,useState,type ReactNode} from 'react';
+import {api} from './api.js';
+import {uploads} from './upload/engine.js';
+type User={id:string;accountId:string;name:string;emailConfigured:boolean;emailVerified:boolean;status:string;plan:string;role:string;anonymous:boolean};
+const AppContext=createContext<{user:User|null;config:any;needsSetup:boolean;ready:boolean;refresh:()=>Promise<void>}>({user:null,config:null,needsSetup:false,ready:false,refresh:async()=>{}});
+export function AppProvider({children}:{children:ReactNode}){const[user,setUser]=useState<User|null>(null),[config,setConfig]=useState<any>(null),[needsSetup,setSetup]=useState(false),[ready,setReady]=useState(false);async function refresh(){const[me,cfg]=await Promise.all([api('/auth/me'),api('/config')]);await uploads.load(me.user?.id??null);setUser(me.user);setSetup(me.needsSetup);setConfig(cfg);setReady(true);}useEffect(()=>{void refresh().catch(()=>setReady(true));let checking=false;const check=async()=>{if(document.hidden||checking)return;checking=true;try{const me=await api('/auth/me');setUser(previous=>{if(previous?.id!==me.user?.id)void uploads.load(me.user?.id??null);return me.user;});}catch{}finally{checking=false;}};const timer=setInterval(()=>void check(),15000);window.addEventListener('focus',check);return()=>{clearInterval(timer);window.removeEventListener('focus',check);};},[]);return <AppContext.Provider value={{user,config,needsSetup,ready,refresh}}>{children}</AppContext.Provider>;}
+export const useApp=()=>useContext(AppContext);

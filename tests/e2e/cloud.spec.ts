@@ -1,0 +1,18 @@
+import {test,expect} from '@playwright/test';
+import {readFile} from 'node:fs/promises';
+import {randomBytes} from 'node:crypto';
+test('two public browser devices synchronize files, restore versions and enforce device revocation',async({page,browser,baseURL})=>{
+ const password=randomBytes(24).toString('base64url'),email=`cloud-browser-${Date.now()}@astrafile.local`;
+ await page.goto('/register');await page.getByLabel('Email address').fill(email);await page.getByLabel('Password',{exact:true}).fill(password);await page.getByRole('button',{name:'Create account',exact:true}).click();await expect(page).toHaveURL(/\/drive/);const me=(await(await page.request.get('/api/auth/me')).json()).user;
+ const admin=await browser.newContext({baseURL});const credentials=JSON.parse(await readFile(process.env.TEST_OWNER_FILE??'.secrets/owner-account.json','utf8'));
+ expect((await admin.request.post('/api/auth/login',{headers:{origin:baseURL!,'x-astra-client':'web'},data:{email:credentials.email,password:credentials.password}})).status()).toBe(200);
+ expect((await admin.request.patch(`/api/admin/users/${me.id}`,{headers:{origin:baseURL!,'x-astra-client':'web'},data:{status:'ACTIVE'}})).status()).toBe(200);
+ const second=await browser.newContext({baseURL}),other=await second.newPage();await other.goto('/login');await other.getByLabel('Email address').fill(email);await other.getByLabel('Password',{exact:true}).fill(password);await other.getByRole('button',{name:'Sign in',exact:true}).click();await expect(other).toHaveURL(/\/drive/);
+ await other.goto('/account/devices');const sessions=(await(await other.request.get('/api/auth/sessions')).json()).items;const session=sessions.find((s:any)=>s.current);expect((await other.request.patch(`/api/auth/sessions/${session.id}`,{headers:{origin:baseURL!,'x-astra-client':'web'},data:{name:'Second acceptance browser'}})).status()).toBe(200);await other.goto('/drive');
+ await page.goto('/');await page.locator('input[aria-label="Choose files"]').setInputFiles([{name:'cloud-browser-target.txt',mimeType:'text/plain',buffer:Buffer.from('original version')},{name:'cloud-browser-source.txt',mimeType:'text/plain',buffer:Buffer.from('replacement version')}]);await expect(page.getByText('Ready to share',{exact:true})).toHaveCount(2);
+ await expect(other.getByRole('button',{name:'cloud-browser-target.txt',exact:true})).toBeVisible({timeout:30000});await expect(other.getByRole('button',{name:'cloud-browser-source.txt',exact:true})).toBeVisible();
+ const files=(await(await page.request.get('/api/files')).json()).items,target=files.find((f:any)=>f.name==='cloud-browser-target.txt');await page.goto(`/drive/${target.id}/versions`);await page.getByRole('button',{name:'Replace from My Cloud',exact:true}).click();await page.getByRole('dialog').getByLabel('All files',{exact:true}).selectOption({label:'cloud-browser-source.txt'});await page.getByRole('dialog').getByRole('button',{name:'Save changes',exact:true}).click();await expect(page.getByRole('button',{name:'Restore version',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Restore version',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'Save changes',exact:true}).click();await expect(page.getByText('Changes saved',{exact:true})).toBeVisible();
+ await page.goto('/account/devices');await page.locator('.session').filter({hasText:'Second acceptance browser'}).getByRole('button',{name:'Revoke',exact:true}).click();await expect.poll(async()=> (await(await other.request.get('/api/auth/me')).json()).user,{timeout:30000}).toBeNull();await expect(other.getByRole('button',{name:'cloud-browser-target.txt',exact:true})).toHaveCount(0,{timeout:30000});
+ await admin.close();await second.close();
+});

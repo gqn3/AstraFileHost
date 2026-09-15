@@ -1,0 +1,43 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm run docs:check
+      - name: Scan Git history for secrets
+        shell: bash
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          set -euo pipefail
+          tool_dir="$(mktemp -d)"
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          checksums="gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl --fail --silent --show-error --location "$base/$archive" -o "$tool_dir/$archive"
+          curl --fail --silent --show-error --location "$base/$checksums" -o "$tool_dir/$checksums"
+          (cd "$tool_dir" && grep " $archive$" "$checksums" | sha256sum --check -)
+          tar -xzf "$tool_dir/$archive" -C "$tool_dir" gitleaks
+          "$tool_dir/gitleaks" git . --log-opts=--all --redact=100 --no-banner

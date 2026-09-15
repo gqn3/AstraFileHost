@@ -1,0 +1,11 @@
+import {parse} from 'dotenv';
+import {readFile,writeFile,mkdir} from 'node:fs/promises';
+const env=parse(await readFile('.env','utf8'));
+const db=new URL(env.DATABASE_URL);db.hostname='astrafile-postgres';db.port='5432';const redis=new URL(env.REDIS_URL);redis.hostname='astrafile-redis';redis.port='6379';
+const acceptance={...env,NODE_ENV:'production',HOST:'0.0.0.0',PORT:'4000',DATABASE_URL:db.toString(),REDIS_URL:redis.toString(),APP_ORIGIN:'https://localhost:18543',S3_ENDPOINT:'http://astrafile-storage:8333',S3_METRICS_ENDPOINT:'http://astrafile-storage:9324/metrics',S3_PUBLIC_ENDPOINT:'https://localhost:18543',STORAGE_DISK_PATH:'/data-check',TRUST_PROXY:'uniquelocal'};
+delete acceptance.POSTGRES_PASSWORD;delete acceptance.REDIS_PASSWORD;delete acceptance.SMTP_URL;
+await writeFile('.secrets/acceptance.env',Object.entries(acceptance).map(([k,v])=>`${k}=${v}`).join('\n'),{mode:0o600});
+if(!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(env.S3_BUCKET??'astrafile'))throw Error('Invalid storage bucket');
+const nginx=(await readFile('infra/reverse-proxy/nginx.conf','utf8')).replace('server astrafile-api:4000','server astrafile-acceptance-api:4000').replace('location ^~ /astrafile/',`location ^~ /${env.S3_BUCKET??'astrafile'}/`);
+await writeFile('.local/acceptance-nginx.conf',nginx);await mkdir('.local/proxy-logs',{recursive:true});
+console.info('Created isolated local TLS acceptance configuration without printing credentials.');
